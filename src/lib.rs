@@ -20,6 +20,11 @@ pub mod thread {
         pub value: T,
     }
 
+    pub enum GraphMessage<T> {
+        Starting(NodeIndex),
+        Finished(Result<T>)
+    }
+
     enum Message<T> {
         Operation(Operation<T>),
         Terminate
@@ -47,18 +52,19 @@ pub mod thread {
     }
 
     impl Worker {
-        fn new<T: Send + 'static>(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message<T>>>>, sender: Sender<Result<T>>)
+        fn new<T: Send + 'static>(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message<T>>>>, sender: Sender<GraphMessage<T>>)
                                   -> Worker {
             let thread = thread::spawn(move || loop {
                 let receiver = Arc::clone(&receiver);
                 let msg = receiver.lock().unwrap().recv().unwrap();
                 match msg {
                     Message::Operation(Operation{node_id, data, name, f}) => {
-                        println!("{} ({:?}) is being executed  by Worker {}", name, node_id, id);
-                        sender.send(Result {
+                        sender.send(GraphMessage::Starting(node_id));
+//                        println!("{} ({:?}) is being executed  by Worker {}", name, node_id, id);
+                        sender.send(GraphMessage::Finished(Result {
                             node_id,
                             value: f(data)
-                        });
+                        }));
                     }
                     Message::Terminate => break
                 }
@@ -73,7 +79,7 @@ pub mod thread {
 
     pub struct ThreadPool<T: Send> {
         workers: Vec<Worker>,
-        receiver_thread_result: Receiver<Result<T>>,
+        receiver_thread_result: Receiver<GraphMessage<T>>,
         sender: Sender<Message<T>>
     }
 
@@ -116,7 +122,7 @@ pub mod thread {
             self.sender.send(Message::Operation(operation)).unwrap();
         }
 
-        pub fn get_receiver(&self) -> &Receiver<Result<T>>{
+        pub fn get_receiver(&self) -> &Receiver<GraphMessage<T>>{
             &self.receiver_thread_result
         }
     }

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use zama_challenge::Job;
 use zama_challenge::thread;
-use zama_challenge::thread::ThreadPool;
+use zama_challenge::thread::{ThreadPool, GraphMessage};
 use std::time::Duration;
 use std::fmt::Display;
 use petgraph::dot::Dot;
@@ -42,6 +42,7 @@ pub struct ExecutableGraph<T: Send> {
     current_nodes: HashSet<NodeIndex>,
     inprocess_nodes: Vec<NodeIndex>,
     finished_nodes: HashSet<NodeIndex>,
+    parallel_nodes: Vec<NodeIndex>,
     execution_order: Vec<NodeIndex>,
     name_map: HashMap<NodeIndex, String>
 }
@@ -57,6 +58,7 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
             inprocess_nodes: Vec::new(),
             name_map: HashMap::new(),
             execution_order: Vec::new(),
+            parallel_nodes: Vec::new(),
             thread_pool,
         }
     }
@@ -118,7 +120,6 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
 
         let eg = ExecutableGraph::new(thread_pool);
         if let Some(distribution) = distribution {
-            let distribution = distribution;
             assert_eq!(distribution.len(), operations.len());
             assert_eq!(distribution.iter().sum::<f32>(), 1.0);
             return Self::construct_random_graph(eg, node_number, max_parents, distribution, arguments, operations)
@@ -235,7 +236,7 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     }
 
     // add the node with the operation `f`, name `name`, and whose parents are `parents`.
-    // there must be at least 1 parent, which must already exist.
+    // there must be at least 1 parent, and they must exist.
     // we put no constraint on duplicate parents
     pub fn add_node(
         &mut self,
@@ -268,7 +269,7 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     }
 
     fn execute_valid_nodes(&mut self){
-        // look for current nodes that have parents who finished their task, and haven't been already
+        // look for current nodes whose parents finished their task, and haven't been already
         // executed or are being executed. Execute them, removing them from the current nodes, and add
         // all their children to it
         let nodes_to_execute: Vec<_> = self.current_nodes.iter().copied()
@@ -295,19 +296,29 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
 
         while !self.is_done() {
             //todo handle the possible error?
-            if let Ok(thread::Result { node_id: node, value }) = self.thread_pool.get_receiver().recv() {
-                self.print_result(node, value);
-                self.finished_nodes.insert(node);
-                self.inprocess_nodes.remove(find_index(&self.inprocess_nodes, &node).unwrap());
+            if let Ok(message_type)  = self.thread_pool.get_receiver().recv() {
+                match message_type {
+                   GraphMessage::Finished(thread::Result { node_id: node, value }) => {
+                       self.parallel_nodes.remove(find_index(&self.parallel_nodes, &node).unwrap());
+                       self.print_result(node, Some(value));
+                       self.finished_nodes.insert(node);
+                       self.inprocess_nodes.remove(find_index(&self.inprocess_nodes, &node).unwrap());
 
-                // update the weight of outgoing edges with the result of the operation
-                let edges_info: Vec<_> = self.graph.edges_directed(node, Direction::Outgoing)
-                    .map(|e| e.target())
-                    .collect();
-                for target in edges_info{
-                    self.graph.update_edge(node, target, Some(value));
+                       // update the weight of outgoing edges with the result of the operation
+                       let edges_info: Vec<_> = self.graph.edges_directed(node, Direction::Outgoing)
+                           .map(|e| e.target())
+                           .collect();
+                       for target in edges_info{
+                           self.graph.update_edge(node, target, Some(value));
+                       }
+                       self.execute_valid_nodes();
+                   },
+                    GraphMessage::Starting(node) => {
+                        self.parallel_nodes.push(node);
+                        self.print_result(node, None);
+                    }
                 }
-                self.execute_valid_nodes();
+
             }
         }
 
@@ -338,9 +349,20 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         }
     }
 
-    fn print_result(&self, node: NodeIndex, value: T){
+    fn print_result(&self, node: NodeIndex, value: Option<T>){
         let name = self.name_map.get(&node).unwrap();
-        println!("{} ({:?}) returned with value {}", name, node, value);
+        match value {
+            Some(value) => println!("\t{} returned with value {}\n{:?}",
+                                    name,
+                                    value,
+                                    self.parallel_nodes.iter()
+                                        .map(|node| self.name_map.get(node).unwrap())
+                                        .collect::<Vec<_>>()
+            ),
+            None => println!("{:?}", self.parallel_nodes.iter()
+                .map(|node| self.name_map.get(node).unwrap())
+                .collect::<Vec<_>>())
+        }
     }
 
 
