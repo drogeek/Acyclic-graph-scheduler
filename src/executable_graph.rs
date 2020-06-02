@@ -150,17 +150,17 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         let initial_node_number  = arguments.len();
         for arg in arguments {
             let r = rng.gen();
-            let Operation{f, name} = Self::pick_random_operation(&cumulated_distribution, r, &operations, &mut name_counter).unwrap();
-            nodes.push(eg.add_initial_node(f, arg, &name));
+            let operation = Self::pick_random_operation(&cumulated_distribution, r, &operations, &mut name_counter).unwrap();
+            nodes.push(eg.add_initial_node(operation, arg));
         }
 
         for _ in 0..node_number - initial_node_number {
             let parents_nbr = rng.gen_range(1, max_parents+1);
             let r = rng.gen();
 
-            let Operation{f, name} = Self::pick_random_operation(&cumulated_distribution, r, &operations, &mut name_counter).unwrap();
+            let operation = Self::pick_random_operation(&cumulated_distribution, r, &operations, &mut name_counter).unwrap();
             let parents = Self::pick_random_parents(&nodes, parents_nbr);
-            nodes.push(eg.add_node(f, parents, &name));
+            nodes.push(eg.add_node(operation, parents));
         }
         eg
     }
@@ -207,11 +207,21 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     // generate the dot graph, save it, generate a png image of the graph, and open it
     // note: you need graphviz installed
     pub fn show_graph(&self){
-        let script_name = "generate_and_show_dot.sh";
-        self.save_dot();
-        Command::new(format!("./{}", script_name))
-            .status()
-            .expect(&format!("{} failed", script_name));
+        if cfg!(windows){
+            let script_name = "generate_and_show_dot.bat";
+            self.save_dot();
+            Command::new(format!(".\\{}", script_name))
+                .status()
+                .expect(&format!("{} failed", script_name));
+        }
+        else {
+            let script_name = "generate_and_show_dot.sh";
+            self.save_dot();
+            Command::new(format!("./{}", script_name))
+                .status()
+                .expect(&format!("{} failed", script_name));
+        }
+
     }
 
 
@@ -240,11 +250,11 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     // we put no constraint on duplicate parents
     pub fn add_node(
         &mut self,
-        f: fn(Vec<T>) -> T,
+        operation: Operation<T>,
         parents: Vec<NodeIndex>,
-        name: &str
     ) -> NodeIndex {
         assert_ne!(parents.len(), 0);
+        let Operation{f, name} = operation;
         let new_node = self.graph.add_node(f);
         for node in parents{
             self.graph.add_edge(node, new_node, None);
@@ -258,10 +268,10 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     // receive `arguments` as input
     pub fn add_initial_node(
         &mut self,
-        f: fn(Vec<T>) -> T,
+        operation: Operation<T>,
         arguments: Args<T>,
-        name: &str
     ) -> NodeIndex {
+        let Operation{f, name} = operation;
         let node = self.graph.add_node(f);
         self.name_map.insert(node, String::from(name));
         self.initial_nodes.push((node, arguments));
