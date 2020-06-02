@@ -2,8 +2,8 @@ use petgraph::Graph;
 use std::sync::Arc;
 
 //todo use Arg<T> intsead of Vec<T>
-pub type Job<T> = dyn Fn(Vec<T>) -> T + Send + Sync + 'static;
-pub type ExecutableGraph<'a, T> = Graph<Arc<Job<T>>, Option<T>>;
+pub type Job<T> = fn(Vec<T>) -> T;
+pub type ExecutableGraphType<T> = Graph<Job<T>, Option<T>>;
 
 pub mod thread {
     use std::thread::JoinHandle;
@@ -12,7 +12,7 @@ pub mod thread {
     use std::sync::mpsc::{Sender, Receiver};
     use std::thread;
     use petgraph::Graph;
-    use crate::{Job, ExecutableGraph};
+    use crate::{Job, ExecutableGraphType};
 
     #[derive(Debug)]
     pub struct Result<T> {
@@ -27,15 +27,17 @@ pub mod thread {
 
     pub struct Operation<T>{
         pub node_id: NodeIndex,
+        pub name: String,
         pub data: Vec<T>,
-        pub f: Arc<Job<T>>
+        pub f: Job<T>
     }
     impl<T> Operation<T>{
-        pub fn new(node_id: NodeIndex, data: Vec<T>, g: &ExecutableGraph<T>) -> Operation<T>{
+        pub fn new(node_id: NodeIndex, data: Vec<T>, name: String, g: &ExecutableGraphType<T>) -> Operation<T>{
             Operation{
                 node_id,
                 data,
-                f: Arc::clone(&g[node_id])
+                name,
+                f: g[node_id]
             }
         }
     }
@@ -51,8 +53,8 @@ pub mod thread {
                 let receiver = Arc::clone(&receiver);
                 let msg = receiver.lock().unwrap().recv().unwrap();
                 match msg {
-                    Message::Operation(Operation{node_id, data, f}) => {
-                        println!("Worker {} executing {:?}", id, node_id);
+                    Message::Operation(Operation{node_id, data, name, f}) => {
+                        println!("{} ({:?}) is being executed  by Worker {}", name, node_id, id);
                         sender.send(Result {
                             node_id,
                             value: f(data)
@@ -89,7 +91,7 @@ pub mod thread {
         }
     }
 
-    impl<T: Send + 'static> ThreadPool<T>{
+    impl<T: Send + 'static > ThreadPool<T>{
         pub fn new(size: usize) -> ThreadPool<T>{
             assert!(size > 0);
             let (sender, receiver) = mpsc::channel();
