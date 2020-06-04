@@ -6,25 +6,27 @@ mod executable_graph;
 
 
 fn main(){
-    let thread_pool = ThreadPool::<u32>::new(6);
+    let thread_pool = ThreadPool::<i32>::new(6);
 //    let mut g = predefined_graph(thread_pool);
     let mut g = ExecutableGraph::generate_random(
         100,
-        3,
-        vec![vec![3,4], vec![4,5,1,1], vec![3,7,12,20,55]],
+        6,
+        vec![vec![3,4], vec![4,5,1,1], vec![3,7,12,20,55], vec![1,2,3]],
         vec![
             Operation{f:|x| x.iter().sum(), name: String::from("sum")},
             Operation{f:|x| x[0]+1, name: String::from("incr")},
+            Operation{f:|x| x.iter().fold(0, |acc, x| acc - *x), name: String::from("sub")},
             Operation{
                 f:|x| {
                     let n = x.len();
                     std::thread::sleep(Duration::new(n as u64, 0));
-                    n as u32
+                    n as i32
                 },
                 name: String::from("sleep")
             },
         ],
-        Some(vec![0.1,0.6,0.3]),
+//        None,
+        Some(vec![0.2,0.4,0.3,0.1]),
         thread_pool
     );
 

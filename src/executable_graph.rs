@@ -1,12 +1,10 @@
 use petgraph::{Graph, Direction};
-use petgraph::visit::{EdgeRef, Dfs};
+use petgraph::visit::EdgeRef;
 use petgraph::graph::{NodeIndex};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use zama_challenge::Job;
 use zama_challenge::thread;
 use zama_challenge::thread::{ThreadPool, GraphMessage};
-use std::time::Duration;
 use std::fmt::Display;
 use petgraph::dot::Dot;
 use std::process::Command;
@@ -150,7 +148,10 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         let initial_node_number  = arguments.len();
         for arg in arguments {
             let r = rng.gen();
-            let operation = Self::pick_random_operation(&cumulated_distribution, r, &operations, &mut name_counter).unwrap();
+            let operation = Self::pick_random_operation(&cumulated_distribution,
+                                                        r,
+                                                        &operations,
+                                                        &mut name_counter).unwrap();
             nodes.push(eg.add_initial_node(operation, arg));
         }
 
@@ -158,7 +159,10 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
             let parents_nbr = rng.gen_range(1, max_parents+1);
             let r = rng.gen();
 
-            let operation = Self::pick_random_operation(&cumulated_distribution, r, &operations, &mut name_counter).unwrap();
+            let operation = Self::pick_random_operation(&cumulated_distribution,
+                                                        r,
+                                                        &operations,
+                                                        &mut name_counter).unwrap();
             let parents = Self::pick_random_parents(&nodes, parents_nbr);
             nodes.push(eg.add_node(operation, parents));
         }
@@ -225,14 +229,13 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     }
 
 
-
-
     // we consider the process done when there are no nodes left and no node being processed
     fn is_done(&self) -> bool{
         self.inprocess_nodes.is_empty() && self.current_nodes.is_empty()
     }
 
     // in the end, we shouldn't need it if we use the `add_node` and `add_initial_node` functions
+    /*
     fn has_cycle(graph: &Graph<Arc<Job<T>>, Option<T>>, starting_node: NodeIndex) -> bool{
         let mut dfs = Dfs::new(graph, starting_node);
         //skip the first value, which is `starting_node` itself
@@ -244,10 +247,11 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         }
         false
     }
+    */
 
     // add the node with the operation `f`, name `name`, and whose parents are `parents`.
     // there must be at least 1 parent, and they must exist.
-    // we put no constraint on duplicate parents
+    // there are no constraint about duplicate parents
     pub fn add_node(
         &mut self,
         operation: Operation<T>,
@@ -325,6 +329,7 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
                    },
                     GraphMessage::Starting(node) => {
                         self.parallel_nodes.push(node);
+                        self.execution_order.push(node);
                         self.print_result(node, None);
                     }
                 }
@@ -385,15 +390,12 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     }
 
     fn execute_node_with_arg(&mut self, node: NodeIndex, arguments: Vec<T>){
-        if !self.execution_order.contains(&node){
-            self.execution_order.push(node);
-        }
+
         self.inprocess_nodes.push(node);
         self.current_nodes.remove(&node);
         self.thread_pool.execute(thread::Operation::new(
             node,
             arguments,
-            String::from(self.name_map.get(&node).unwrap()),
             &self.graph)
         );
     }

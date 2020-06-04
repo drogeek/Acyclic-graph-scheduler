@@ -1,5 +1,4 @@
 use petgraph::Graph;
-use std::sync::Arc;
 
 //todo use Arg<T> intsead of Vec<T>
 pub type Job<T> = fn(Vec<T>) -> T;
@@ -11,7 +10,6 @@ pub mod thread {
     use std::sync::{Arc, Mutex, mpsc};
     use std::sync::mpsc::{Sender, Receiver};
     use std::thread;
-    use petgraph::Graph;
     use crate::{Job, ExecutableGraphType};
 
     #[derive(Debug)]
@@ -32,16 +30,14 @@ pub mod thread {
 
     pub struct Operation<T>{
         pub node_id: NodeIndex,
-        pub name: String,
         pub data: Vec<T>,
         pub f: Job<T>
     }
     impl<T> Operation<T>{
-        pub fn new(node_id: NodeIndex, data: Vec<T>, name: String, g: &ExecutableGraphType<T>) -> Operation<T>{
+        pub fn new(node_id: NodeIndex, data: Vec<T>, g: &ExecutableGraphType<T>) -> Operation<T>{
             Operation{
                 node_id,
                 data,
-                name,
                 f: g[node_id]
             }
         }
@@ -52,19 +48,19 @@ pub mod thread {
     }
 
     impl Worker {
-        fn new<T: Send + 'static>(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message<T>>>>, sender: Sender<GraphMessage<T>>)
+        fn new<T: Send + 'static>(_id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message<T>>>>, sender: Sender<GraphMessage<T>>)
                                   -> Worker {
             let thread = thread::spawn(move || loop {
                 let receiver = Arc::clone(&receiver);
                 let msg = receiver.lock().unwrap().recv().unwrap();
                 match msg {
-                    Message::Operation(Operation{node_id, data, name, f}) => {
-                        sender.send(GraphMessage::Starting(node_id));
+                    Message::Operation(Operation{node_id, data, f}) => {
+                        sender.send(GraphMessage::Starting(node_id)).unwrap();
 //                        println!("{} ({:?}) is being executed  by Worker {}", name, node_id, id);
                         sender.send(GraphMessage::Finished(Result {
                             node_id,
                             value: f(data)
-                        }));
+                        })).unwrap();
                     }
                     Message::Terminate => break
                 }
