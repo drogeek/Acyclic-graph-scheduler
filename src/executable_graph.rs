@@ -371,11 +371,11 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
                                     name,
                                     value,
                                     self.parallel_nodes.iter()
-                                        .map(|node| self.name_map.get(node).unwrap())
+                                        .filter_map(|node| self.name_map.get(node))
                                         .collect::<Vec<_>>()
             ),
             None => println!("{:?}", self.parallel_nodes.iter()
-                .map(|node| self.name_map.get(node).unwrap())
+                .filter_map(|node| self.name_map.get(node))
                 .collect::<Vec<_>>())
         }
     }

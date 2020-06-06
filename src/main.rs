@@ -9,8 +9,8 @@ fn main(){
     let thread_pool = ThreadPool::<i32>::new(6);
 //    let mut g = predefined_graph(thread_pool);
     let mut g = ExecutableGraph::generate_random(
-        100,
-        6,
+        20,
+        3,
         vec![vec![3,4], vec![4,5,1,1], vec![3,7,12,20,55], vec![1,2,3]],
         vec![
             Operation{f:|x| x.iter().sum(), name: String::from("sum")},
@@ -30,7 +30,7 @@ fn main(){
         thread_pool
     );
 
-    g.show_graph();
+//    g.show_graph();
     g.start();
     g.show_graph();
 
