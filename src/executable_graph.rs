@@ -1,7 +1,7 @@
 use petgraph::{Graph, Direction};
 use petgraph::visit::EdgeRef;
 use petgraph::graph::{NodeIndex};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use zama_challenge::Job;
 use zama_challenge::thread;
 use zama_challenge::thread::{ThreadPool, GraphMessage};
@@ -14,6 +14,9 @@ use rand::{thread_rng, Rng};
 use rand::distributions::Uniform;
 use std::cmp::min;
 use rand::distributions::Distribution;
+use std::rc::Rc;
+use std::cell::RefCell;
+
 type Args<T> = Vec<T>;
 
 //returns the index of the first occurence in vec
@@ -33,31 +36,109 @@ pub struct Operation<T: Send> {
     pub name: String
 }
 
-pub struct ExecutableGraph<T: Send> {
-    graph: Graph<Job<T>, Option<T>>,
-    thread_pool: ThreadPool<T>,
-    initial_nodes: Vec<(NodeIndex, Args<T>)>,
-    current_nodes: HashSet<NodeIndex>,
-    inprocess_nodes: Vec<NodeIndex>,
-    finished_nodes: HashSet<NodeIndex>,
-    parallel_nodes: Vec<NodeIndex>,
-    execution_order: Vec<NodeIndex>,
-    name_map: HashMap<NodeIndex, String>
+
+#[derive(Clone)]
+struct Node<T: Send> {
+    f: Job<T>,
+    counter: Rc<RefCell<Option<u32>>>,
+    pub name: String,
+    index: Option<NodeIndex>,
+    graph: Rc<RefCell<Graph<Node<T>, Option<T>>>>,
+    thread_pool: Rc<RefCell<ThreadPool<T>>>,
 }
 
+impl<T: Clone + Send + 'static> Node<T> {
+    pub fn new(f: Job<T>,
+               parents: Option<Vec<NodeIndex>>,
+               name: String,
+               graph: Rc<RefCell<Graph<Node<T>, Option<T>>>>,
+               thread_pool: Rc<RefCell<ThreadPool<T>>>,
+    ) -> NodeIndex {
+
+        match parents {
+            Some(parents) => {
+                let node = Node {
+                    f,
+                    counter: Rc::new(RefCell::new(Some(parents.len() as u32))),
+                    name,
+                    graph: Rc::clone(&graph),
+                    index: None,
+                    thread_pool
+                };
+
+                let mut graph = graph.borrow_mut();
+                let node_idx = graph.add_node(node);
+                graph[node_idx].index = Some(node_idx);
+                for parent in parents{
+                    graph.add_edge(parent, node_idx, None);
+                }
+                node_idx
+            }
+            None => {
+                let node = Node {
+                    f,
+                    counter: Rc::new(RefCell::new(None)),
+                    name,
+                    graph: Rc::clone(&graph),
+                    index: None,
+                    thread_pool
+                };
+
+                let mut graph = graph.borrow_mut();
+                let node_idx = graph.add_node(node);
+                graph[node_idx].index = Some(node_idx);
+                node_idx
+            }
+        }
+
+    }
+
+    pub fn index(&self) -> NodeIndex{
+        self.index.unwrap()
+    }
+
+    pub fn execute(&mut self, arguments: Vec<T>){
+
+        self.thread_pool.borrow().execute(thread::Operation::new(
+            self.index(),
+            arguments,
+            self.f)
+        );
+    }
+
+    pub fn decrement(&mut self){
+        let counter = self.counter.borrow().clone();
+        if let Some(mut counter) = counter {
+            counter -= 1;
+            if counter == 0 {
+                let arguments: Vec<_> = self.graph.borrow().edges_directed(self.index(), Direction::Incoming)
+                    .map(|x| x.weight().as_ref().unwrap().clone())
+                    .collect();
+                self.execute(arguments);
+            }
+            *self.counter.borrow_mut() = Some(counter);
+        }
+    }
+}
+
+pub struct ExecutableGraph<T: Send> {
+    graph: Rc<RefCell<Graph<Node<T>, Option<T>>>>,
+    thread_pool: Rc<RefCell<ThreadPool<T>>>,
+    initial_nodes: Vec<(NodeIndex, Args<T>)>,
+    parallel_nodes: Vec<NodeIndex>,
+    execution_order: Vec<NodeIndex>,
+    counter: u32,
+}
 
 impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     pub fn new(thread_pool: ThreadPool<T>) -> ExecutableGraph<T>{
         ExecutableGraph {
-            graph: Graph::<Job<T>, Option<T>>::new(),
-            current_nodes: HashSet::new(),
-            finished_nodes: HashSet::new(),
+            graph: Rc::new(RefCell::new(Graph::<Node<T>, Option<T>>::new())),
             initial_nodes: Vec::new(),
-            inprocess_nodes: Vec::new(),
-            name_map: HashMap::new(),
             execution_order: Vec::new(),
             parallel_nodes: Vec::new(),
-            thread_pool,
+            thread_pool: Rc::new(RefCell::new(thread_pool)),
+            counter: 0,
         }
     }
 
@@ -174,19 +255,20 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         // we reconstruct a graph with the same node and edges, except that node and edges contains
         // strings corresponding respectively to the node's name and the edge's value
 
-        let mut new_graph: Graph<String, String> = Graph::with_capacity(self.graph.node_count(), self.graph.edge_count());
-        let nodes : Vec<_> = self.graph.node_indices().into_iter().collect();
+        let graph = self.graph.borrow();
+        let mut new_graph: Graph<String, String> = Graph::with_capacity(graph.node_count(), graph.edge_count());
+        let nodes : Vec<_> = graph.node_indices().into_iter().collect();
 
         // we make sure the node index correspond in both graphs
         let mut old_to_new_nodes = HashMap::new();
         for node in nodes.iter() {
-            let new_node = new_graph.add_node(String::from(self.name_map.get(&node).unwrap()));
+            let new_node = new_graph.add_node(graph[*node].name.clone());
             old_to_new_nodes.insert(node, new_node);
         }
 
         // recreate the edges
         for node in nodes.iter() {
-            let edges = self.graph.edges(*node);
+            let edges = graph.edges(*node);
             for edge in edges {
                 let source = old_to_new_nodes.get(&edge.source()).unwrap();
                 let target = old_to_new_nodes.get(&edge.target()).unwrap();
@@ -231,7 +313,7 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
 
     // we consider the process done when there are no nodes left and no node being processed
     fn is_done(&self) -> bool{
-        self.inprocess_nodes.is_empty() && self.current_nodes.is_empty()
+        self.counter == 0
     }
 
     // in the end, we shouldn't need it if we use the `add_node` and `add_initial_node` functions
@@ -259,13 +341,8 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
     ) -> NodeIndex {
         assert_ne!(parents.len(), 0);
         let Operation{f, name} = operation;
-        let new_node = self.graph.add_node(f);
-        for node in parents{
-            self.graph.add_edge(node, new_node, None);
-        }
-
-        self.name_map.insert(new_node, String::from(name));
-        new_node
+        self.counter += 1;
+        Node::new(f, Some(parents), name, Rc::clone(&self.graph), Rc::clone(&self.thread_pool))
     }
 
     // add an orphean node which will be one of the entry points of the graph, and which will
@@ -276,31 +353,12 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         arguments: Args<T>,
     ) -> NodeIndex {
         let Operation{f, name} = operation;
-        let node = self.graph.add_node(f);
-        self.name_map.insert(node, String::from(name));
+        let node = Node::new(f, None, name, Rc::clone(&self.graph), Rc::clone(&self.thread_pool));
+        self.counter += 1;
         self.initial_nodes.push((node, arguments));
         node
     }
 
-    fn execute_valid_nodes(&mut self){
-        // look for current nodes whose parents finished their task, and haven't been already
-        // executed or are being executed. Execute them, removing them from the current nodes, and add
-        // all their children to it
-        let nodes_to_execute: Vec<_> = self.current_nodes.iter().copied()
-            .filter(|node| {
-                !self.finished_nodes.contains(&node) && !self.inprocess_nodes.contains(&node) &&
-                    self.graph.neighbors_directed(*node, Direction::Incoming)
-                        .all(|neighbour| self.finished_nodes.contains(&neighbour))
-            }).collect();
-        //execute nodes and add their children into current nodes (without duplicate)
-        for node in nodes_to_execute{
-            for child in self.graph.neighbors_directed(node, Direction::Outgoing) {
-                self.current_nodes.insert(child);
-            };
-            self.execute_node(node);
-        }
-
-    }
 
     pub fn start(&mut self) {
         //launch the initial nodes in threads,
@@ -310,22 +368,22 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
 
         while !self.is_done() {
             //todo handle the possible error?
-            if let Ok(message_type)  = self.thread_pool.get_receiver().recv() {
+            if let Ok(message_type)  = self.thread_pool.borrow().get_receiver().recv() {
                 match message_type {
-                   GraphMessage::Finished(thread::Result { node_id: node, value }) => {
-                       self.parallel_nodes.remove(find_index(&self.parallel_nodes, &node).unwrap());
-                       self.print_result(node, Some(value));
-                       self.finished_nodes.insert(node);
-                       self.inprocess_nodes.remove(find_index(&self.inprocess_nodes, &node).unwrap());
+                   GraphMessage::Finished(thread::Result { node_id, value }) => {
+
+                       self.counter -= 1;
+                       self.parallel_nodes.remove(find_index(&self.parallel_nodes, &node_id).unwrap());
+                       self.print_result(node_id, Some(value));
 
                        // update the weight of outgoing edges with the result of the operation
-                       let edges_info: Vec<_> = self.graph.edges_directed(node, Direction::Outgoing)
+                       let edges_info: Vec<_> = self.graph.borrow().edges_directed(node_id, Direction::Outgoing)
                            .map(|e| e.target())
                            .collect();
                        for target in edges_info{
-                           self.graph.update_edge(node, target, Some(value));
+                           self.graph.borrow_mut().update_edge(node_id, target, Some(value));
+                           self.graph.borrow()[target].clone().decrement();
                        }
-                       self.execute_valid_nodes();
                    },
                     GraphMessage::Starting(node) => {
                         self.parallel_nodes.push(node);
@@ -340,63 +398,30 @@ impl<T: Send + Copy + Display + ToString + 'static> ExecutableGraph<T>{
         println!();
         println!("The execution order was:");
         for (idx, (node, name)) in self.execution_order.iter()
-            .map(|node| (node, self.name_map.get(node).unwrap())).enumerate(){
+            .map(|node| (node, self.graph.borrow()[*node].name.clone())).enumerate(){
             println!("{}: {} ({:?})", idx+1, name, node);
         }
     }
 
     fn execute_initial_nodes(&mut self){
-        for (initial_node, _) in self.initial_nodes.iter(){
-            self.current_nodes.insert(*initial_node);
-        }
-
-        //copy the list so we can iterate over it while modifying `self` afterward
-        let mut initial_nodes_copy = Vec::new();
-        for (node, arguments) in self.initial_nodes.iter() {
-            initial_nodes_copy.push((node.clone(), arguments.clone()));
-        }
-        //execute initial nodes and add their children (without duplicate)
-        for (node, arguments) in initial_nodes_copy {
-            self.execute_node_with_arg(node, arguments);
-            for child in self.graph.neighbors_directed(node, Direction::Outgoing) {
-                self.current_nodes.insert(child);
-            }
+        for (initial_node, arguments) in self.initial_nodes.iter(){
+            self.graph.borrow_mut()[*initial_node].execute(arguments.clone());
         }
     }
 
     fn print_result(&self, node: NodeIndex, value: Option<T>){
-        let name = self.name_map.get(&node).unwrap();
+        let name = self.graph.borrow()[node].name.clone();
         match value {
             Some(value) => println!("\t{} returned with value {}\n{:?}",
                                     name,
                                     value,
                                     self.parallel_nodes.iter()
-                                        .filter_map(|node| self.name_map.get(node))
+                                        .map(|node| self.graph.borrow()[*node].name.clone())
                                         .collect::<Vec<_>>()
             ),
             None => println!("{:?}", self.parallel_nodes.iter()
-                .filter_map(|node| self.name_map.get(node))
+                .map(|node| self.graph.borrow()[*node].name.clone())
                 .collect::<Vec<_>>())
         }
-    }
-
-
-    fn execute_node(&mut self, node: NodeIndex){
-        // build arguments from the incoming edges of the node, then execute it
-        let arguments : Vec<T> = self.graph.edges_directed(node, Direction::Incoming)
-            .filter_map(|x| *x.weight())
-            .collect();
-        self.execute_node_with_arg(node, arguments);
-    }
-
-    fn execute_node_with_arg(&mut self, node: NodeIndex, arguments: Vec<T>){
-
-        self.inprocess_nodes.push(node);
-        self.current_nodes.remove(&node);
-        self.thread_pool.execute(thread::Operation::new(
-            node,
-            arguments,
-            &self.graph)
-        );
     }
 }

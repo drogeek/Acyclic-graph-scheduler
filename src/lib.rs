@@ -1,8 +1,5 @@
-use petgraph::Graph;
-
 //todo use Arg<T> intsead of Vec<T>
 pub type Job<T> = fn(Vec<T>) -> T;
-pub type ExecutableGraphType<T> = Graph<Job<T>, Option<T>>;
 
 pub mod thread {
     use std::thread::JoinHandle;
@@ -10,7 +7,8 @@ pub mod thread {
     use std::sync::{Arc, Mutex, mpsc};
     use std::sync::mpsc::{Sender, Receiver};
     use std::thread;
-    use crate::{Job, ExecutableGraphType};
+    //use crate::{Job, ExecutableGraphType};
+    use crate::Job;
 
     #[derive(Debug)]
     pub struct Result<T> {
@@ -34,11 +32,11 @@ pub mod thread {
         pub f: Job<T>
     }
     impl<T> Operation<T>{
-        pub fn new(node_id: NodeIndex, data: Vec<T>, g: &ExecutableGraphType<T>) -> Operation<T>{
+        pub fn new(node_id: NodeIndex, data: Vec<T>, f: Job<T>) -> Operation<T>{
             Operation{
                 node_id,
                 data,
-                f: g[node_id]
+                f
             }
         }
     }

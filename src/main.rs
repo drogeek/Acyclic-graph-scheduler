@@ -1,16 +1,18 @@
 use zama_challenge::thread::ThreadPool;
 use crate::executable_graph::{Operation, ExecutableGraph};
 use std::time::Duration;
+use std::num::Wrapping;
 
 mod executable_graph;
 
 
 fn main(){
-    let thread_pool = ThreadPool::<i32>::new(6);
+    let thread_pool = ThreadPool::<Wrapping<i32>>::new(6);
 //    let mut g = predefined_graph(thread_pool);
+   /*
     let mut g = ExecutableGraph::generate_random(
-        20,
-        3,
+        100,
+        4,
         vec![vec![3,4], vec![4,5,1,1], vec![3,7,12,20,55], vec![1,2,3]],
         vec![
             Operation{f:|x| x.iter().sum(), name: String::from("sum")},
@@ -28,11 +30,33 @@ fn main(){
 //        None,
         Some(vec![0.2,0.4,0.3,0.1]),
         thread_pool
+    );*/
+    let mut g = ExecutableGraph::<Wrapping<i32>>::generate_random(
+        10000,
+        500,
+        vec![[3,4].iter().map(|x| Wrapping(*x)).collect::<Vec<_>>(),
+        [3,4,5].iter().map(|x| Wrapping(*x)).collect::<Vec<_>>(),
+        [2,3,4].iter().map(|x| Wrapping(*x)).collect::<Vec<_>>(),
+        [4].iter().map(|x| Wrapping(*x)).collect::<Vec<_>>()
+        ],
+        vec![
+            Operation{f:|x| x.iter().sum(), name: String::from("sum")},
+            Operation{f:|x| x.iter().fold(Wrapping(0), |acc, x| acc - *x), name: String::from("sub")},
+            Operation{
+                f:|x| {
+                    let n = x.len();
+                    std::thread::sleep(Duration::new(1, 0));
+                    Wrapping(n as i32)
+                },
+                name: String::from("sleep")
+            },
+        ],
+        Some(vec![0.5,0.497,0.003]),
+        thread_pool
     );
 
-//    g.show_graph();
+
     g.start();
-    g.show_graph();
 
 }
 
