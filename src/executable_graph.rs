@@ -39,8 +39,8 @@ pub struct Operation<T: Send> {
 
 //Each node represent an operation to execute.
 //There are two ways to execute one:
-//- decrementing the counter by calling the `decrement` method, the arguments being built from the
-//incoming edges
+//- decrementing the counter by calling the `decrement` method, once it reaches zero, it gets
+//executed with the arguments being built from the incoming edges
 //- executing it directly with
 //specified arguments by calling the `execute` method
 #[derive(Clone)]
