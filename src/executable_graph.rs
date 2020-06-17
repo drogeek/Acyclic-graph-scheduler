@@ -37,6 +37,12 @@ pub struct Operation<T: Send> {
 }
 
 
+//Each node represent an operation to execute.
+//There are two ways to execute one:
+//- decrementing the counter by calling the `decrement` method, the arguments being built from the
+//incoming edges
+//- executing it directly with
+//specified arguments by calling the `execute` method
 #[derive(Clone)]
 struct Node<T: Send> {
     f: Job<T>,
@@ -121,6 +127,7 @@ impl<T: Clone + Send + 'static> Node<T> {
     }
 }
 
+//This is the structure that holds the graph scheduler, it needs a thread pool instance
 pub struct ExecutableGraph<T: Send> {
     graph: Rc<RefCell<Graph<Node<T>, Option<T>>>>,
     thread_pool: Rc<RefCell<ThreadPool<T>>>,
