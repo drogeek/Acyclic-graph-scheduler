@@ -1,3 +1,6 @@
+# Description
+This is a scheduler to compute an acyclic graph in parallel (with a pool of threads), where nodes represent operations, and edges data to process
+
 # How to run the project : 
 On Linux : 
 ```console 
